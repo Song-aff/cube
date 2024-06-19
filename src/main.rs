@@ -1,17 +1,27 @@
 #![no_std]
 #![no_main]
 
+use alloc::vec::Vec;
 use esp_backtrace as _;
 use esp_hal::{
-    clock::ClockControl, delay::Delay, gpio::{Io, Level, Output}, i2c::{self, I2C}, peripherals::{Peripherals, I2C0}, prelude::*, rtc_cntl::{self, Rtc}, system::SystemControl
+    clock::ClockControl,
+    delay::Delay,
+    gpio::{Io, Level, Output},
+    i2c::{self, I2C},
+    peripherals::{Peripherals, I2C0},
+    prelude::*,
+    rtc_cntl::{self, Rtc},
+    system::SystemControl,
 };
 use esp_println::println;
 use utils::Random;
 extern crate alloc;
 use core::mem::MaybeUninit;
-mod utils;
 mod display;
-use display::{*};
+mod utils;
+use core::cmp::Ordering::{Greater, Less};
+use display::*;
+
 #[global_allocator]
 static ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
 
@@ -24,8 +34,8 @@ fn init_heap() {
     }
 }
 
-use mpu6050::*;
 use max7219::*;
+use mpu6050::*;
 
 #[entry]
 fn main() -> ! {
@@ -48,8 +58,12 @@ fn main() -> ! {
     );
     let mut mpu = Mpu6050::new(i2c);
     let _ = mpu.init(&mut delay);
-    let (clk,cs,din) = (Output::new(io.pins.gpio0, Level::High), Output::new(io.pins.gpio1, Level::High), Output::new(io.pins.gpio2, Level::High));
-    let mut display = MAX7219::from_pins(1,din, cs, clk ).unwrap();
+    let (clk, cs, din) = (
+        Output::new(io.pins.gpio0, Level::High),
+        Output::new(io.pins.gpio1, Level::High),
+        Output::new(io.pins.gpio2, Level::High),
+    );
+    let mut display = MAX7219::from_pins(1, din, cs, clk).unwrap();
     display.power_on().unwrap();
     display.set_intensity(0, 0x05).unwrap();
     // let data:[u8;8] = [1,2,3,4,5,6,7,8];
@@ -58,24 +72,47 @@ fn main() -> ! {
     let random = Random::new(&rtc);
     let mut matrix: [[Bit; 8]; 8] = [[Bit::Low; 8]; 8];
     let mut data: [u8; 8] = to_hex(&matrix);
+    let mut points = (0..8)
+        .flat_map(|x| (0..8).map(move |y| (x, y)))
+        .collect::<Vec<(u8, u8)>>();
+    points.sort_by(|_a, _b| {
+        if random.get_rand(10) > 4 {
+            Less
+        } else {
+            Greater
+        }
+    });
+    points.sort_by(|_a, _b| {
+        if random.get_rand(10) > 4 {
+            Less
+        } else {
+            Greater
+        }
+    });
+
+    println!("{:?}", points);
+
     log::info!("Hello world!");
     loop {
-        let emtpy_count  =find_emtpy_count(&matrix);
-        let (i,j) = if emtpy_count <= 15 {find_emtpy_offset(&matrix)} else {(random.get_rand(8) as usize,random.get_rand(8) as usize)};
-        matrix[i][j] = Bit::High;
-        data=to_hex(&matrix);
-        display.write_raw(0b00000000, &data).unwrap();
+        // let emtpy_count  =find_emtpy_count(&matrix);
+        // let (i,j) = if emtpy_count <= 15 {find_emtpy_offset(&matrix)} else {(random.get_rand(8) as usize,random.get_rand(8) as usize)};
+        if points.len() > 0 {
+            let (i, j) = points.pop().unwrap();
+            println!("{i}-{j}\n");
+            matrix[i as usize][j as usize] = Bit::High;
+            data = to_hex(&matrix);
+            display.write_raw(0b00000000, &data).unwrap();
+        }
 
-        
         let acc = mpu.get_acc().unwrap();
         // println!("acc: {:?}", acc[0]);
-        if acc[0]<0.5{
+        if acc[0] < 0.5 {
             bz.set_high();
-        }else {
+        } else {
             bz.set_low();
         }
         // println!("{}",random.get_rand(10000));
         // delay.delay(500.millis());
-        delay.delay(50.millis())
+        delay.delay(10.millis())
     }
 }
